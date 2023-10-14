@@ -48,10 +48,7 @@ public class MainActivity extends AppCompatActivity {
     ImageView imageView;
     TextView textView;
     Bitmap bitmap;
-    Mat mat;
-    Mat mat_copy;
-    Mat edge;
-    Mat result;
+
     MediaMetadataRetriever mediaMetadataRetriever;
     final Handler handler = new Handler();
     float[] lastEvent = null;
@@ -78,8 +75,7 @@ public class MainActivity extends AppCompatActivity {
                 case LoaderCallbackInterface.SUCCESS:
                 {
                     Log.i("OpenCV", "OpenCV loaded successfully");
-                    mat = new Mat();
-                    edge = new Mat();
+
                 } break;
                 default:
                 {
@@ -135,85 +131,106 @@ public class MainActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
 
         if(requestCode == 10 && data != null){
-            Uri vidUri = data.getData();
-            MediaMetadataRetriever tRetriever = new MediaMetadataRetriever();
-            tRetriever.setDataSource(getBaseContext(), vidUri);
-            mediaMetadataRetriever = tRetriever;
-            String dur = mediaMetadataRetriever.extractMetadata(
-                    MediaMetadataRetriever.METADATA_KEY_DURATION);
-            float duration = Float.parseFloat(dur);
+            new Thread(new Runnable() {
+                public void run() {
+                    // Perform image processing here
+                    Uri vidUri = data.getData();
+                    MediaMetadataRetriever tRetriever = new MediaMetadataRetriever();
+                    tRetriever.setDataSource(getBaseContext(), vidUri);
+                    mediaMetadataRetriever = tRetriever;
+                    String dur = mediaMetadataRetriever.extractMetadata(
+                            MediaMetadataRetriever.METADATA_KEY_DURATION);
+                    float duration = Float.parseFloat(dur);
 
-            float freq_sum = 0;
-            int step = 10;
-            int frame_num = (int) duration / 33 - 1;
-            int frame_index = 0;
-            int offset = 0;
-            String freqs = "";
+                    float freq_sum = 0;
+                    int step = 5;
+                    int frame_num = (int) duration / 33 - 1;
+                    int frame_index = 0;
+                    int offset = 0;
+                    String freqs = "";
 
-            while(frame_index < frame_num){
-                bitmap = mediaMetadataRetriever.getFrameAtIndex(frame_index);
+                    Mat mat_copy;
+                    Mat mat = new Mat();
+                    Mat edge = new Mat();
+                    Mat result;
 
-                Utils.bitmapToMat(bitmap, mat);
+                    while(frame_index < frame_num){
+                        bitmap = mediaMetadataRetriever.getFrameAtIndex(frame_index);
 
-                List<MatOfPoint> contours = new ArrayList<>();
-                // Find contour of the led
-                mat_copy = Frame.find_contour(contours, mat);
-                Utils.matToBitmap(mat_copy, bitmap);
-                imageView.setImageBitmap(bitmap);
+                        Utils.bitmapToMat(bitmap, mat);
 
-                // Calculate radius and center of the led
-                double[] radius_n_center = Frame.radius_and_center(contours);
-                int center_y = (int) radius_n_center[2];
-                int start = (int) (radius_n_center[1]);
-                int end = mat_copy.cols();
-                boolean black = true;
+                        List<MatOfPoint> contours = new ArrayList<>();
+                        // Find contour of the led
+                        mat_copy = Frame.find_contour(contours, mat);
+                        Utils.matToBitmap(mat_copy, bitmap);
 
-                for (int i = start; i < end; i++){
-                    double test = mat_copy.get(center_y, i)[0];
-                    if (test > 50) {
-                        black = false;
-                        break;
+                        // Calculate radius and center of the led
+                        double[] radius_n_center = Frame.radius_and_center(contours);
+                        int center_y = (int) radius_n_center[2];
+                        int start = (int) (radius_n_center[1]);
+                        int end = mat_copy.cols();
+                        boolean black = true;
+
+                        for (int i = start; i < end; i++){
+                            double test = mat_copy.get(center_y, i)[0];
+                            if (test > 50) {
+                                black = false;
+                                break;
+                            }
+                        }
+
+                        if(!black) {
+                            int[] range = Frame.light_range((int) radius_n_center[1], (int) radius_n_center[2], (float) radius_n_center[0]);
+                            // Process image to get the edge of pulses
+                            Frame frame = Frame.frame_process(mat_copy, (float) radius_n_center[0]);
+
+                            Imgproc.Canny(frame.mat, edge, frame.threshold / 5, frame.threshold, 7);
+
+                            // Convert image to quantifiable data
+                            List<Float> pulse = Frame.getPulses(Frame.frame_quantify(edge, range, (float) radius_n_center[0]), range[0]);
+
+                            Frame.filterPules(pulse, frame.mat, frame.threshold, (int) radius_n_center[2], (float) radius_n_center[0]);
+
+                            // Calculate corresponding led frequency
+                            float freq = Frame.calc_freq(pulse);
+                            freq_sum += freq;
+                            frame_index += step;
+                            if(frame_index - offset == 30 || frame_index - offset == 60) {
+                                freqs += Float.toString(freq_sum / 6) + "\n";
+                                freq_sum = 0;
+                            }
+
+                            if (frame_index - offset >= 90) {
+                                // Draw the edge of pulse
+                                freqs += Float.toString(freq_sum / 6) + "\n";
+                                result = Frame.draw(frame.mat, pulse, (int) radius_n_center[2]);
+                                Utils.matToBitmap(result, bitmap);
+
+                                break;
+                            }
+                        }else {
+                            frame_index++;
+                            offset++;
+                        }
                     }
+
+                    String finalFreqs = freqs;
+                    runOnUiThread(new Runnable() {
+                        public void run() {
+                            // Update the UI with the processed image or results
+                            imageView.setImageBitmap(bitmap);
+                            textView.setText(finalFreqs);
+                        }
+                    });
                 }
+            }).start();
 
-                if(!black) {
-                    int[] range = Frame.light_range((int) radius_n_center[1], (int) radius_n_center[2], (float) radius_n_center[0]);
-                    // Process image to get the edge of pulses
-                    Frame frame = Frame.frame_process(mat_copy, (float) radius_n_center[0]);
-
-                    Imgproc.Canny(frame.mat, edge, frame.threshold / 5, frame.threshold, 7);
-
-                    // Convert image to quantifiable data
-                    List<Float> pulse = Frame.getPulses(Frame.frame_quantify(edge, range, (float) radius_n_center[0]), range[0]);
-
-                    Frame.filterPules(pulse, frame.mat, frame.threshold, (int) radius_n_center[2], (float) radius_n_center[0]);
-
-                    // Calculate corresponding led frequency
-                    float freq = Frame.calc_freq(pulse);
-                    freq_sum += freq;
-                    frame_index += step;
-                    if(frame_index - offset == 30 || frame_index - offset == 60) {
-                        freqs += Float.toString(freq_sum / 3) + "\n";
-                        freq_sum = 0;
-                    }
-
-                    if (frame_index - offset >= 90) {
-                        // Draw the edge of pulse
-                        freqs += Float.toString(freq_sum / 3) + "\n";
-                        result = Frame.draw(frame.mat, pulse, (int) radius_n_center[2]);
-                        Utils.matToBitmap(result, bitmap);
-                        imageView.setImageBitmap(bitmap);
-                        textView.setText(freqs);
-                        break;
-                    }
-                }else {
-                    frame_index++;
-                    offset++;
-                }
-            }
         }
 
         if(requestCode == 100 && data != null){
+            Mat mat_copy;
+            Mat result;
+            Mat mat = new Mat();
             try {
                 bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), data.getData());
 
@@ -251,7 +268,7 @@ public class MainActivity extends AppCompatActivity {
                     float freq = Frame.calc_freq(pulse);
 
                     // Draw the edge of pulse
-                    Mat result = Frame.draw(struct.mat, pulse, (int) radius_n_center[2]);
+                    result = Frame.draw(struct.mat, pulse, (int) radius_n_center[2]);
 
                     Utils.matToBitmap(result, bitmap);
                     imageView.setImageBitmap(bitmap);
