@@ -11,42 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class Frame {
-//                v_idx = -1
-//                tot = 0
-//                div = 0
-//                impulses = []
-//                while v_idx < len(vals)-1:
-//                v_idx += 1
-//                if vals[v_idx] < (.3 * max(vals)):
-//                continue
-//                while vals[v_idx] > (.3 * max(vals)):
-//                tot += v_idx * vals[v_idx]
-//                div += vals[v_idx]
-//                v_idx += 1
-//                try:
-//                impulses.append(float(tot) / div)
-//                except ZeroDivisionError:
-//                pass
-//                        tot = 0
-//                div = 0
-
-
-//                Mat drawing = Mat.zeros(mat.size(), CvType.CV_8UC3);
-//                List<MatOfPoint> contoursPolyList = new ArrayList<>(contoursPoly.length);
-//
-//                for (MatOfPoint2f poly : contoursPoly) {
-//                    contoursPolyList.add(new MatOfPoint(poly.toArray()));
-//                }
-//
-//                Scalar color = new Scalar(rng.nextInt(256), rng.nextInt(256), rng.nextInt(256));
-//                for (int i = 0; i < contours.size(); i++) {
-//                    Imgproc.drawContours(drawing, contoursPolyList, i, color);
-//                }
-//
-
-//                Imgproc.circle(drawing, centers[index], (int) radius[index][0], color, 2);
-//
-//                Utils.matToBitmap(drawing, bitmap);
     public Mat mat;
     public double threshold;
 
@@ -136,6 +100,17 @@ public class Frame {
     }
 
     public static void filterPules(List<Float> pulse, Mat mat, double threshold, int center_y, float radius){
+//        float dis = 1000;
+        int one = 0;
+        boolean remove = false;
+        for(int i = 1; i < pulse.size(); i++){
+            if (pulse.get(i) - pulse.get(i - 1) < radius * 0.1){
+                remove = true;
+                one = i;
+            }
+        }
+        if(remove)
+            pulse.remove(one);
         boolean last = false;
         boolean cur = false;
         List<Integer> index = new ArrayList<>();
@@ -166,7 +141,7 @@ public class Frame {
         float factor = 1 / radius;
         int blur_width = (int) (factor * radius + 1);
         Mat inter = new Mat();
-        Imgproc.blur(mat_copy, inter, new Size(blur_width, radius));
+        Imgproc.blur(mat_copy, inter, new Size(blur_width - 1, radius));
         double threshold = Imgproc.threshold(inter, inter ,0, 255,
                 Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
 
@@ -193,7 +168,7 @@ public class Frame {
         return mat;
     }
 
-    public static float calc_freq(List<Float> pulse){
+    public static float calc_freq(List<Float> pulse, int code){
         List<Float> pulse_copy_1  = new ArrayList<>();
         List<Float> pulse_copy_2  = new ArrayList<>();
         for (float nums: pulse){
@@ -208,8 +183,12 @@ public class Frame {
             sum += pulse_copy_1.get(i) - pulse_copy_2.get(i);
         }
         float interval = sum / pulse_copy_2.size();
-//        float period = interval * 0.0000319f;
-        float period = interval * 0.00001858f;
+        float period = 0;
+        if (code == 100){
+            period = interval * 0.0000319f;
+        }else {
+            period = interval * 0.0000186f;
+        }
         float freq = 1 / period;
         return freq;
     }

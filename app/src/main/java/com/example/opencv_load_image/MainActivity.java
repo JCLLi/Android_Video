@@ -45,9 +45,12 @@ import java.util.Random;
 public class MainActivity extends AppCompatActivity {
     Button select;
     Button video;
+    Button clear;
     ImageView imageView;
     TextView textView;
     Bitmap bitmap;
+
+    float[] freq_list;
 
     MediaMetadataRetriever mediaMetadataRetriever;
     final Handler handler = new Handler();
@@ -94,9 +97,10 @@ public class MainActivity extends AppCompatActivity {
 
         select = findViewById(R.id.select);
         video = findViewById(R.id.video);
+        clear = findViewById(R.id.clear);
         imageView = findViewById(R.id.image);
         textView = findViewById(R.id.freq);
-
+        freq_list = new float[]{3704, 5000, 6667, 10000};
         imageView.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
@@ -116,9 +120,18 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        clear.setOnClickListener((new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                textView.setText("");
+                imageView.setImageResource(0);
+            }
+        }));
+
         video.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                textView.setText("Processing...");
                 Intent intent = new Intent(Intent.ACTION_GET_CONTENT, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
                 intent.setType("video/*");
                 startActivityForResult(intent, 10);
@@ -147,17 +160,20 @@ public class MainActivity extends AppCompatActivity {
                     int frame_num = (int) duration / 33 - 1;
                     int frame_index = 0;
                     int offset = 0;
+
                     String freqs = "";
 
                     Mat mat_copy;
                     Mat mat = new Mat();
                     Mat edge = new Mat();
                     Mat result;
+                    boolean after_black = false;
 
                     while(frame_index < frame_num){
                         bitmap = mediaMetadataRetriever.getFrameAtIndex(frame_index);
 
                         Utils.bitmapToMat(bitmap, mat);
+
 
                         List<MatOfPoint> contours = new ArrayList<>();
                         // Find contour of the led
@@ -168,18 +184,25 @@ public class MainActivity extends AppCompatActivity {
                         double[] radius_n_center = Frame.radius_and_center(contours);
                         int center_y = (int) radius_n_center[2];
                         int start = (int) (radius_n_center[1]);
-                        int end = mat_copy.cols();
+                        if(start < 0){
+                            start = 0;
+                        }
+                        int end = start + (int) radius_n_center[0] / 2;
+                        if (end > 719)
+                            end = 719;
                         boolean black = true;
+
 
                         for (int i = start; i < end; i++){
                             double test = mat_copy.get(center_y, i)[0];
-                            if (test > 50) {
+                            if (test > 20) {
                                 black = false;
                                 break;
                             }
                         }
 
                         if(!black) {
+                            after_black = true;
                             int[] range = Frame.light_range((int) radius_n_center[1], (int) radius_n_center[2], (float) radius_n_center[0]);
                             // Process image to get the edge of pulses
                             Frame frame = Frame.frame_process(mat_copy, (float) radius_n_center[0]);
@@ -188,29 +211,64 @@ public class MainActivity extends AppCompatActivity {
 
                             // Convert image to quantifiable data
                             List<Float> pulse = Frame.getPulses(Frame.frame_quantify(edge, range, (float) radius_n_center[0]), range[0]);
-
+                            List<Float> dista = new ArrayList<>();
+                            for(int i = 1; i < pulse.size(); i++){
+                                dista.add(pulse.get(i) - pulse.get(i - 1));
+                            }
                             Frame.filterPules(pulse, frame.mat, frame.threshold, (int) radius_n_center[2], (float) radius_n_center[0]);
 
                             // Calculate corresponding led frequency
-                            float freq = Frame.calc_freq(pulse);
+                            float freq = Frame.calc_freq(pulse, 10);
                             freq_sum += freq;
                             frame_index += step;
-                            if(frame_index - offset == 30 || frame_index - offset == 60) {
-                                freqs += Float.toString(freq_sum / 6) + "\n";
+//                            result = Frame.draw(frame.mat, pulse, (int) radius_n_center[2]);
+//                            Utils.matToBitmap(result, bitmap);
+//                            break;
+
+                            if(frame_index - offset == 30 || frame_index - offset == 60 || frame_index - offset == 90) {
+                                float avg_freq = freq_sum / 6;
+                                float min_abs = Math.abs(avg_freq - freq_list[0]);
+                                int choice = 0;
+                                for (int i = 0; i < freq_list.length; i++){
+
+                                    float diff = Math.abs(avg_freq - freq_list[i]);
+                                    if (diff < min_abs){
+                                        min_abs = diff;
+                                        choice = i;
+                                    }
+                                }
+                                choice++;
+                                freqs += "Pattern " + choice + " ";
+//                                freqs += Float.toString(freq_sum / 6) + "\n";
                                 freq_sum = 0;
                             }
 
-                            if (frame_index - offset >= 90) {
+                            if (frame_index - offset >= 120) {
                                 // Draw the edge of pulse
-                                freqs += Float.toString(freq_sum / 6) + "\n";
+                                float avg_freq = freq_sum / 6;
+                                float min_abs = Math.abs(avg_freq - freq_list[0]);
+                                int choice = 0;
+                                for (int i = 0; i < freq_list.length; i++){
+                                    float diff = Math.abs(avg_freq - freq_list[i]);
+                                    Log.d("diff", Float.toString(diff));
+                                    if (diff < min_abs){
+                                        min_abs = diff;
+                                        choice = i;
+                                    }
+                                    Log.d("choice", Integer.toString(choice));
+                                }
+                                choice++;
+                                freqs += "Pattern " + choice + " ";
+//                                freqs += Float.toString(freq_sum / 6) + "\n";
                                 result = Frame.draw(frame.mat, pulse, (int) radius_n_center[2]);
                                 Utils.matToBitmap(result, bitmap);
-
                                 break;
                             }
                         }else {
-                            frame_index++;
-                            offset++;
+                            if (!after_black){
+                                frame_index++;
+                                offset++;
+                            }
                         }
                     }
 
@@ -265,7 +323,7 @@ public class MainActivity extends AppCompatActivity {
 
                     Frame.filterPules(pulse, struct.mat, struct.threshold, (int) radius_n_center[2], (float) radius_n_center[0]);
                     // Calculate corresponding led frequency
-                    float freq = Frame.calc_freq(pulse);
+                    float freq = Frame.calc_freq(pulse, 100);
 
                     // Draw the edge of pulse
                     result = Frame.draw(struct.mat, pulse, (int) radius_n_center[2]);
